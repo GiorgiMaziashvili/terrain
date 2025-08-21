@@ -36,7 +36,7 @@ jobs:
           npm ci || npm i
 
       - name: Build
-        run: npm run build
+        run: npm run build -- --base=/${{ github.event.repository.name }}/
 
       # SPA fallback & disable Jekyll
       - name: Prepare Pages artifact
