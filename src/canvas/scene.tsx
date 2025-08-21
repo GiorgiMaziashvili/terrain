@@ -1,17 +1,24 @@
-import { ScrollControls, useScroll } from "@react-three/drei"
-import { Canvas, useFrame } from "@react-three/fiber"
+import { ScrollControls, useScroll } from "@react-three/drei";
+import { Canvas, useFrame } from "@react-three/fiber";
 import { useMemo, useRef } from "react";
-import { BufferAttribute, BufferGeometry, Color, Group, LineSegments, MathUtils, Points } from "three"
+import {
+    BufferAttribute,
+    BufferGeometry,
+    Color,
+    Group,
+    MathUtils,
+    Uint16BufferAttribute,
+} from "three";
 
 const GRID_COLS = 140;
 const GRID_ROWS = 140;
-const GRID_SIZE = 40;
+const GRID_SIZE = 45;
 const DOT_SIZE = 2.015;
-const LINE_OPACITY = 0.05;
+const LINE_OPACITY = 0.25;
 const DOT_OPACITY = 1;
 
-const RELIEF_MAX_HEIGHT = 1.8; // peak height when fully morphed
-const RELIEF_FLAT_RADIUS = 2; // radius (0..~0.7) that stays flat in the middle
+const RELIEF_MAX_HEIGHT = 2;
+const RELIEF_FLAT_RADIUS = 2;
 const MAX_SPEED = 0.05;
 let SPEED = 0;
 
@@ -20,192 +27,231 @@ function smoothstep(edge0: number, edge1: number, x: number) {
     return t * t * (3 - 2 * t);
 }
 
-// A simple pseudo-noise using trigs (cheap & good-looking for wire grids)
-// Returns 0..1 approximately
-function cheapNoise(x: number, y: number) {
-    const n =
-        Math.sin(x * 3.7) * 0.5 +
-        Math.cos(y * 4.1) * 0.35 +
-        Math.sin((x + y) * 2.3) * 0.25 +
-        Math.sin(Math.hypot(x, y) * 3.0) * 0.2;
-    // normalize to ~0..1
-    return MathUtils.clamp(0.5 + n * 0.5, 0, 1);
+const NOISE_FREQ = 1.0;
+const NOISE_SPEED = 0.115;
+
+function cheapNoise(x: number, y: number, p: number = 0) {
+    // Multi-octave noise for more organic variation
+    const n1 = Math.sin((x + p) * 3.7) * 0.5 + Math.cos((y - p * 0.8) * 4.1) * 0.35;
+    const n2 = Math.sin((x + y + p * 0.6) * 2.3) * 0.25 + Math.sin((Math.hypot(x, y) + p * 0.4) * 3.0) * 0.2;
+
+    // Add higher frequency details
+    const n3 = Math.sin(x * 12.3 + p * 2) * 0.1 + Math.cos(y * 11.7 + p * 1.8) * 0.08;
+    const n4 = Math.sin((x + y) * 8.5 + p * 1.2) * 0.06;
+
+    const combined = n1 + n2 + n3 + n4;
+
+    // Use a smoother mapping function instead of clamping
+    return 0.5 + combined * 0.4; // Allows values slightly outside [0,1] for more variation
 }
 
 function useGridData() {
     const count = GRID_COLS * GRID_ROWS;
-    const positions2D = new Float32Array(count * 3) // ??
-    const heights = new Float32Array(count); // ??
-    const halfW = GRID_SIZE / 2; // ??
-    const halfH = (GRID_SIZE * (GRID_ROWS / GRID_COLS)) / 2; // ??
+    const positions2D = new Float32Array(count * 3);
+    const edgeMask = new Float32Array(count);
+
+    const halfW = GRID_SIZE / 2;
+    const halfH = (GRID_SIZE * (GRID_ROWS / GRID_COLS)) / 2;
     const gridHeight = halfH * 2;
 
-    let ptr = 0;
+    let ptr = 0,
+        vidx = 0;
     for (let r = 0; r < GRID_ROWS; r++) {
-        const v = r / (GRID_ROWS - 1); // 0..1
+        const v = r / (GRID_ROWS - 1);
         for (let c = 0; c < GRID_COLS; c++) {
-            const u = c / (GRID_COLS - 1); // 0..1
+            const u = c / (GRID_COLS - 1);
 
-            // map u,v to world X/Y with aspect compensation
             const x = MathUtils.lerp(-halfW, halfW, u);
             const y = MathUtils.lerp(-halfH, halfH, v);
 
-            positions2D[ptr] = x; // X
-            positions2D[ptr + 1] = y; // Y
-            positions2D[ptr + 2] = 0; // Z flat initially
+            positions2D[ptr] = x;
+            positions2D[ptr + 1] = y;
+            positions2D[ptr + 2] = 0;
 
-            // radial distance from center in UV space for the flat zone mask
             const du = u - 0.5;
             const dv = v - 0.5;
-            const ruv = Math.hypot(du, dv) * 1.8; // scale radius so edges reach ~1
-
-            // mask that suppresses heights near center, grows toward edges
-            const edgeMask = smoothstep(RELIEF_FLAT_RADIUS, 0.9, ruv);
-
-            // Cheap noise in UV space for repeatable peaks/ridges
-            const n = cheapNoise(u * 2.0, v * 2.0);
-            const ridge = Math.abs(n * 2 - 1); // ridged style
-
-            const h = ridge * RELIEF_MAX_HEIGHT * edgeMask;
-            heights[(ptr / 3) | 0] = h;
+            const ruv = Math.hypot(du, dv) * 1.8;
+            edgeMask[vidx] = smoothstep(RELIEF_FLAT_RADIUS, 0.9, ruv);
 
             ptr += 3;
+            vidx++;
         }
     }
 
     const segments: number[] = [];
-    const idx = (rr: number, cc: number) => rr * GRID_COLS + cc // ??
-
+    const idx = (rr: number, cc: number) => rr * GRID_COLS + cc;
     for (let rr = 0; rr < GRID_ROWS; rr++) {
         for (let cc = 0; cc < GRID_COLS; cc++) {
-            if (cc < GRID_COLS - 1) {
-                segments.push(idx(rr, cc), idx(rr, cc + 1)); // ??
-            }
-            if (rr < GRID_ROWS - 1) {
-                segments.push(idx(rr, cc), idx(rr + 1, cc)); // ??
-            }
+            // Horizontal connections (these are safe)
+            if (cc < GRID_COLS - 1) segments.push(idx(rr, cc), idx(rr, cc + 1));
+            // Vertical connections (these are safe)
+            if (rr < GRID_ROWS - 1) segments.push(idx(rr, cc), idx(rr + 1, cc));
         }
     }
+
     return {
         positions2D,
-        segments: new Uint32Array(segments), // ??
-        heights,
+        segments: new Uint16Array(segments),
+        edgeMask,
         gridHeight,
         halfH,
-    }
+        halfW,
+    };
 }
 
 function GridRelief() {
     const scroll = useScroll();
-    const { positions2D, segments, heights, gridHeight, halfH } = useGridData();
-    const pointsRef = useRef<Points>(null!);
-    const linesRef = useRef<LineSegments>(null!);
+    const { positions2D, segments, edgeMask, gridHeight, halfH, halfW } = useGridData();
+
     const groupRef = useRef<Group>(null!);
 
-    const basePositions = useMemo(() => positions2D.slice(), [positions2D]);
+    // ONE shared position attribute for points and lines
+    const positionAttr = useMemo(
+        () => new BufferAttribute(positions2D.slice(), 3),
+        [positions2D]
+    );
 
     const geom = useMemo(() => {
-        const g = new BufferGeometry() // ??
-        g.setAttribute("position", new BufferAttribute(positions2D, 3)) // ??
-        return g
-    }, [positions2D])
+        const g = new BufferGeometry();
+        g.setAttribute("position", positionAttr);
+        return g;
+    }, [positionAttr]);
 
+    // Dynamic line geometry that filters out wrapped connections
     const lineGeom = useMemo(() => {
         const g = new BufferGeometry();
-        g.setAttribute("position", new BufferAttribute(positions2D.slice(), 3));
-        g.setIndex(new BufferAttribute(segments, 1))
+        g.setAttribute("position", positionAttr);
         return g;
-    }, [positions2D, segments])
+    }, [positionAttr]);
 
-    const workingPositions = useMemo(() => positions2D.slice(), [positions2D]);
+    const basePositions = useMemo(() => positions2D.slice(), [positions2D]);
+    const baseSegments = useMemo(() => segments.slice(), [segments]);
+
     const yOffsetRef = useRef(0);
+    const phaseRef = useRef(0);
+    const seedRef = useRef(Math.random() * 1000);
+
+    // Create a dynamic index buffer for filtering lines
+    const filteredIndices = useMemo(() => new Uint16Array(baseSegments.length), [baseSegments]);
 
     useFrame((_, delta) => {
         const t = MathUtils.clamp(scroll.offset, 0, 1);
-
         const ease = smoothstep(0, 1, t);
+
         SPEED = MathUtils.clamp(ease, 0, MAX_SPEED);
         const rotX = -Math.PI * 0.3 * ease;
-        const posZ = 1 * ease
+        const posZ = 1 * ease;
 
+        // advance scroll + noise phase
         yOffsetRef.current += SPEED * delta * gridHeight;
         if (yOffsetRef.current >= gridHeight) yOffsetRef.current -= gridHeight;
         if (yOffsetRef.current < 0) yOffsetRef.current += gridHeight;
 
-        for (let i = 0, j = 0; i < heights.length; i++, j += 3) {
+        phaseRef.current += NOISE_SPEED * delta;
+
+        const invW = 1 / halfW;
+        const invH = 1 / halfH;
+
+        const arr = positionAttr.array as Float32Array;
+
+        // Update positions and track which points wrapped
+        const wrappedPoints = new Set<number>();
+
+        for (let i = 0, j = 0; i < edgeMask.length; i++, j += 3) {
             const x0 = basePositions[j];
             const y0 = basePositions[j + 1];
 
-            // shift
             let y = y0 - yOffsetRef.current;
+            const originalY = y;
 
-            // wrap into [-halfH, halfH]
-            // (fast wrap without modulo)
-            if (y > halfH) y -= gridHeight;
-            else if (y < -halfH) y += gridHeight;
+            if (y > halfH) {
+                y -= gridHeight;
+                wrappedPoints.add(i);
+            } else if (y < -halfH) {
+                y += gridHeight;
+                wrappedPoints.add(i);
+            }
 
-            workingPositions[j] = x0;
-            workingPositions[j + 1] = y;
-            workingPositions[j + 2] = heights[i] * ease; // your relief morph
+            // evolving height with better curve mapping
+            const nx = (x0 * invW) * NOISE_FREQ + seedRef.current;
+            const ny = (y * invH) * NOISE_FREQ;
+            const n = cheapNoise(nx, ny, phaseRef.current);
+
+            // Instead of ridge function, use power curves for smoother terrain
+            const curve1 = Math.pow(n, 1.8); // Smoother peaks
+            const curve2 = Math.pow(1 - n, 2.2); // Smoother valleys
+            const blended = curve1 * 0.7 + (1 - curve2) * 0.3;
+
+            // Apply slight turbulence for organic variation
+            const turbulence = Math.sin(nx * 15.3 + phaseRef.current * 3) * 0.05 +
+                Math.cos(ny * 13.7 + phaseRef.current * 2.5) * 0.03;
+
+            const finalHeight = (blended + turbulence) * RELIEF_MAX_HEIGHT * edgeMask[i];
+
+            arr[j] = x0;
+            arr[j + 1] = y;
+            arr[j + 2] = finalHeight * ease;
         }
+        positionAttr.needsUpdate = true;
+
+        // Filter segments to avoid connections across wrap boundary
+        let filteredCount = 0;
+        for (let i = 0; i < baseSegments.length; i += 2) {
+            const idx1 = baseSegments[i];
+            const idx2 = baseSegments[i + 1];
+
+            const point1Wrapped = wrappedPoints.has(idx1);
+            const point2Wrapped = wrappedPoints.has(idx2);
+
+            // Only include segments where both points have the same wrap status
+            if (point1Wrapped === point2Wrapped) {
+                filteredIndices[filteredCount] = idx1;
+                filteredIndices[filteredCount + 1] = idx2;
+                filteredCount += 2;
+            }
+        }
+
+        // Update line geometry with filtered indices
+        const indexAttr = new Uint16BufferAttribute(filteredIndices.slice(0, filteredCount), 1);
+        lineGeom.setIndex(indexAttr);
+
         if (groupRef.current) {
             groupRef.current.rotation.x = rotX;
             groupRef.current.position.z = posZ;
-        }
-        if (pointsRef.current) {
-            const g = pointsRef.current.geometry as BufferGeometry & {
-                attributes: { position: BufferAttribute };
-            };
-            (g.attributes.position.array as Float32Array).set(workingPositions);
-            g.attributes.position.needsUpdate = true;
-        }
-
-        if (linesRef.current) {
-            const g = linesRef.current.geometry as BufferGeometry & {
-                attributes: { position: BufferAttribute };
-            };
-            (g.attributes.position.array as Float32Array).set(workingPositions);
-            g.attributes.position.needsUpdate = true;
-
-
         }
     });
 
     return (
         <group ref={groupRef}>
-            <lineSegments ref={linesRef} geometry={lineGeom}>
-                <lineBasicMaterial transparent opacity={LINE_OPACITY} />
+            <lineSegments geometry={lineGeom}>
+                <lineBasicMaterial transparent opacity={LINE_OPACITY} depthWrite={false} />
             </lineSegments>
-            <points ref={pointsRef} geometry={geom}>
+            <points geometry={geom}>
                 <pointsMaterial
                     size={DOT_SIZE}
                     sizeAttenuation={false}
                     transparent
                     opacity={DOT_OPACITY}
                     toneMapped={false}
+                    depthWrite={false}
                     color={new Color(52.0, 5.0, 52.0)}
                 />
             </points>
         </group>
-    )
+    );
 }
-
 
 export const CanvasScene = () => {
     return (
-        <Canvas
-            gl={{ antialias: true }}
-            dpr={[1, 2]}
-            style={{ width: '100vw', height: '100vh' }}
-        >
+        <Canvas gl={{ antialias: true }} dpr={[1, 2]} style={{ width: "100vw", height: "100vh" }}>
             <color attach="background" args={[0x0, 0x0, 0x0]} />
             <ambientLight intensity={0.5} />
-            <fogExp2 attach="fog" args={['#000000', 0.15]} />
+            <fogExp2 attach="fog" args={["#000000", 0.15]} />
             <directionalLight position={[3, 5, 6]} intensity={0.8} />
 
             <ScrollControls pages={3} damping={0.18}>
                 <GridRelief />
             </ScrollControls>
         </Canvas>
-    )
-}
+    );
+};
