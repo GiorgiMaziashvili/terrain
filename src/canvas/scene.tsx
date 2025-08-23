@@ -1,4 +1,5 @@
-import { ScrollControls, useScroll } from "@react-three/drei";
+import { Scroll, ScrollControls, useScroll } from "@react-three/drei";
+import { animated as a, to, useSpring as useWebSpring } from "@react-spring/web";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { useMemo, useRef } from "react";
 import {
@@ -7,15 +8,17 @@ import {
     Color,
     Group,
     MathUtils,
+    PointsMaterial,
     Uint16BufferAttribute,
 } from "three";
+import type { LineMaterial } from "three-stdlib";
 
 const GRID_COLS = 140;
 const GRID_ROWS = 140;
 const GRID_SIZE = 45;
-const DOT_SIZE = 2.015;
-const LINE_OPACITY = 0.25;
-const DOT_OPACITY = 1;
+const DOT_SIZE = 3.015;
+const LINE_OPACITY = 0.1;
+const DOT_OPACITY = 0.2;
 
 const RELIEF_MAX_HEIGHT = 2;
 const RELIEF_FLAT_RADIUS = 2;
@@ -31,18 +34,15 @@ const NOISE_FREQ = 1.0;
 const NOISE_SPEED = 0.115;
 
 function cheapNoise(x: number, y: number, p: number = 0) {
-    // Multi-octave noise for more organic variation
     const n1 = Math.sin((x + p) * 3.7) * 0.5 + Math.cos((y - p * 0.8) * 4.1) * 0.35;
     const n2 = Math.sin((x + y + p * 0.6) * 2.3) * 0.25 + Math.sin((Math.hypot(x, y) + p * 0.4) * 3.0) * 0.2;
 
-    // Add higher frequency details
     const n3 = Math.sin(x * 12.3 + p * 2) * 0.1 + Math.cos(y * 11.7 + p * 1.8) * 0.08;
     const n4 = Math.sin((x + y) * 8.5 + p * 1.2) * 0.06;
 
     const combined = n1 + n2 + n3 + n4;
 
-    // Use a smoother mapping function instead of clamping
-    return 0.5 + combined * 0.4; // Allows values slightly outside [0,1] for more variation
+    return 0.5 + combined * 0.4;
 }
 
 function useGridData() {
@@ -82,9 +82,7 @@ function useGridData() {
     const idx = (rr: number, cc: number) => rr * GRID_COLS + cc;
     for (let rr = 0; rr < GRID_ROWS; rr++) {
         for (let cc = 0; cc < GRID_COLS; cc++) {
-            // Horizontal connections (these are safe)
             if (cc < GRID_COLS - 1) segments.push(idx(rr, cc), idx(rr, cc + 1));
-            // Vertical connections (these are safe)
             if (rr < GRID_ROWS - 1) segments.push(idx(rr, cc), idx(rr + 1, cc));
         }
     }
@@ -104,8 +102,9 @@ function GridRelief() {
     const { positions2D, segments, edgeMask, gridHeight, halfH, halfW } = useGridData();
 
     const groupRef = useRef<Group>(null!);
+    const lineRef = useRef<LineMaterial>(null!);
+    const pointRef = useRef<PointsMaterial>(null!);
 
-    // ONE shared position attribute for points and lines
     const positionAttr = useMemo(
         () => new BufferAttribute(positions2D.slice(), 3),
         [positions2D]
@@ -117,7 +116,6 @@ function GridRelief() {
         return g;
     }, [positionAttr]);
 
-    // Dynamic line geometry that filters out wrapped connections
     const lineGeom = useMemo(() => {
         const g = new BufferGeometry();
         g.setAttribute("position", positionAttr);
@@ -131,7 +129,6 @@ function GridRelief() {
     const phaseRef = useRef(0);
     const seedRef = useRef(Math.random() * 1000);
 
-    // Create a dynamic index buffer for filtering lines
     const filteredIndices = useMemo(() => new Uint16Array(baseSegments.length), [baseSegments]);
 
     useFrame((_, delta) => {
@@ -141,6 +138,9 @@ function GridRelief() {
         SPEED = MathUtils.clamp(ease, 0, MAX_SPEED);
         const rotX = -Math.PI * 0.3 * ease;
         const posZ = 1 * ease;
+
+        lineRef.current.opacity = LINE_OPACITY + 0.2 * ease;
+        pointRef.current.opacity = DOT_OPACITY + 0.7 * ease;
 
         // advance scroll + noise phase
         yOffsetRef.current += SPEED * delta * gridHeight;
@@ -154,7 +154,6 @@ function GridRelief() {
 
         const arr = positionAttr.array as Float32Array;
 
-        // Update positions and track which points wrapped
         const wrappedPoints = new Set<number>();
 
         for (let i = 0, j = 0; i < edgeMask.length; i++, j += 3) {
@@ -162,7 +161,7 @@ function GridRelief() {
             const y0 = basePositions[j + 1];
 
             let y = y0 - yOffsetRef.current;
-            const originalY = y;
+
 
             if (y > halfH) {
                 y -= gridHeight;
@@ -172,17 +171,14 @@ function GridRelief() {
                 wrappedPoints.add(i);
             }
 
-            // evolving height with better curve mapping
             const nx = (x0 * invW) * NOISE_FREQ + seedRef.current;
             const ny = (y * invH) * NOISE_FREQ;
             const n = cheapNoise(nx, ny, phaseRef.current);
 
-            // Instead of ridge function, use power curves for smoother terrain
             const curve1 = Math.pow(n, 1.8); // Smoother peaks
             const curve2 = Math.pow(1 - n, 2.2); // Smoother valleys
             const blended = curve1 * 0.7 + (1 - curve2) * 0.3;
 
-            // Apply slight turbulence for organic variation
             const turbulence = Math.sin(nx * 15.3 + phaseRef.current * 3) * 0.05 +
                 Math.cos(ny * 13.7 + phaseRef.current * 2.5) * 0.03;
 
@@ -194,7 +190,6 @@ function GridRelief() {
         }
         positionAttr.needsUpdate = true;
 
-        // Filter segments to avoid connections across wrap boundary
         let filteredCount = 0;
         for (let i = 0; i < baseSegments.length; i += 2) {
             const idx1 = baseSegments[i];
@@ -203,7 +198,6 @@ function GridRelief() {
             const point1Wrapped = wrappedPoints.has(idx1);
             const point2Wrapped = wrappedPoints.has(idx2);
 
-            // Only include segments where both points have the same wrap status
             if (point1Wrapped === point2Wrapped) {
                 filteredIndices[filteredCount] = idx1;
                 filteredIndices[filteredCount + 1] = idx2;
@@ -211,7 +205,6 @@ function GridRelief() {
             }
         }
 
-        // Update line geometry with filtered indices
         const indexAttr = new Uint16BufferAttribute(filteredIndices.slice(0, filteredCount), 1);
         lineGeom.setIndex(indexAttr);
 
@@ -223,11 +216,18 @@ function GridRelief() {
 
     return (
         <group ref={groupRef}>
+
             <lineSegments geometry={lineGeom}>
-                <lineBasicMaterial transparent opacity={LINE_OPACITY} depthWrite={false} />
+                <lineBasicMaterial
+                    ref={lineRef}
+                    transparent
+                    opacity={LINE_OPACITY}
+                    depthWrite={false}
+                />
             </lineSegments>
             <points geometry={geom}>
                 <pointsMaterial
+                    ref={pointRef}
                     size={DOT_SIZE}
                     sizeAttenuation={false}
                     transparent
@@ -241,7 +241,56 @@ function GridRelief() {
     );
 }
 
+
+export const Hero = () => {
+    const scroll = useScroll();
+
+    // Web (DOM) spring for CSS transforms
+    const [{ y, scale, opacity }, api] = useWebSpring(() => ({
+        y: 0,
+        scale: 1,
+        opacity: 1,
+        config: { tension: 180, friction: 22 }
+    }));
+
+    useFrame(() => {
+        const tIntro = scroll.range(0 / 3, 1 / 3);     // page 0
+        const tMid = scroll.range(1 / 3, 1 / 3);     // page 1
+        const tOut = scroll.range(2 / 3, 1 / 3);     // page 2
+
+        const easeIntro = MathUtils.smoothstep(0, 1, tIntro);
+        const easeOut = MathUtils.smoothstep(0, 1, tOut);
+
+        api.start({
+            y: -220 * easeIntro + 120 * tMid,
+            scale: 1 - 0.15 * easeIntro,
+            opacity: 1 - 0.9 * easeOut
+        });
+    });
+    return (
+        <a.div
+            className="hero"
+            style={{
+                position: "absolute",
+                top: 0, left: 0,
+                width: "100vw",
+                height: "100vh",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                textAlign: "center",
+                transform: to([y, scale], (yv, sv) => `translate3d(0, ${yv}px, 0) scale(${sv})`),
+                opacity
+            }}
+        >
+            <h1>Insipiring, Thinking, Prototyping, Crafting, Developing, Supporting Digital Products for any mountains.</h1>
+        </a.div>
+    )
+}
+
 export const CanvasScene = () => {
+
+
     return (
         <Canvas gl={{ antialias: true }} dpr={[1, 2]} style={{ width: "100vw", height: "100vh" }}>
             <color attach="background" args={[0x0, 0x0, 0x0]} />
@@ -250,6 +299,9 @@ export const CanvasScene = () => {
             <directionalLight position={[3, 5, 6]} intensity={0.8} />
 
             <ScrollControls pages={3} damping={0.18}>
+                <Scroll html>
+                    <Hero />
+                </Scroll>
                 <GridRelief />
             </ScrollControls>
         </Canvas>
