@@ -256,16 +256,15 @@ export const Hero = () => {
     useFrame(() => {
         const tIntro = scroll.range(0 / 3, 1 / 3);     // page 0
         const tMid = scroll.range(1 / 3, 1 / 3);     // page 1
-        const tOut = scroll.range(2 / 3, 1 / 3);     // page 2
 
         const easeIntro = MathUtils.smoothstep(0, 1, tIntro);
-        const easeOut = MathUtils.smoothstep(0, 1, tOut);
 
         api.start({
             y: -220 * easeIntro + 120 * tMid,
-            scale: 1 - 0.15 * easeIntro,
-            opacity: 1 - 0.9 * easeOut
+            scale: 1 - 0.15 * tIntro,
+            opacity: 1 - 1 * tIntro,
         });
+
     });
     return (
         <a.div
