@@ -14,8 +14,11 @@
     @media (max-width:950px){
         height: 60px;
         svg{
-            width:100px;
+            width:70px;
         }
+    }
+    svg{
+        width:80px;
     }
 }
 
@@ -35,6 +38,7 @@
     h1{
         font-size:60px;
         text-transform: uppercase;
+        font-family: SpaceBold;
         @media (max-width:950px){
             font-size:30px;
         }
@@ -50,5 +54,58 @@
     p{
         font-size:30px;
         color:rgba(255,255,255,0.6);
+        font-family: Inter;
+        font-weight: 200;
+        margin-top: 40px;
+        @media (max-width:950px){
+            font-size:18px;
+            margin-top: 15px;
+        }
+    }
+}
+
+.mouse{
+    position:absolute;
+    bottom:20px;
+    left:50%;
+    transform: translateX(-50%);
+    width:35px;
+    height:65px;
+    border:3px solid #fff;
+    border-radius:20px;
+    opacity:0.3;
+    padding:2px;
+    display: flex;
+    justify-content: center;
+    padding:8px 0;
+    &__dot{
+        width:15px;
+        height:15px;
+        background:#fff;
+        border-radius:50%;
+        animation: dotMove 2s ease-in-out infinite;
+    }
+    @keyframes dotMove{
+        0%{transform: translateY(0px);}
+        20%{transform: translateY(30px);}
+        40%{transform: translateY(0px);opacity: 0;}
+        41%{transform: translateY(0px);opacity: 0;}
+        100%{transform: translateY(0px);}
+    }
+     @media (max-width:950px){
+        width:25px;
+        height:45px;
+        border:2px solid #fff;
+        &__dot{
+            width:10px;
+            height:10px;
+        }
+        @keyframes dotMove{
+        0%{transform: translateY(0px);}
+        20%{transform: translateY(10px);}
+        40%{transform: translateY(0px);opacity: 0;}
+        41%{transform: translateY(0px);opacity: 0;}
+        100%{transform: translateY(0px);}
+    }
     }
 }

@@ -244,13 +244,24 @@ function GridRelief() {
 
 export const Hero = () => {
     const scroll = useScroll();
-
     // Web (DOM) spring for CSS transforms
     const [{ y, scale, opacity }, api] = useWebSpring(() => ({
         y: 0,
         scale: 1,
         opacity: 1,
-        config: { tension: 180, friction: 22 }
+        config: { tension: 180, friction: 22 },
+    }));
+
+    const [paragraph, pApi] = useWebSpring(() => ({
+        y: 0,
+        scale: 1,
+        opacity: 1,
+        config: { tension: 180, friction: 22 },
+    }));
+
+    const [mouse, mouseApi] = useWebSpring(() => ({
+        opacity: 1,
+        config: { tension: 180, friction: 22 },
     }));
 
     useFrame(() => {
@@ -261,8 +272,18 @@ export const Hero = () => {
 
         api.start({
             y: -220 * easeIntro + 120 * tMid,
-            scale: 1 - 0.15 * tIntro,
-            opacity: 1 - 1 * tIntro,
+            scale: 1 - 0.5 * tIntro,
+            opacity: 1 - 1.5 * tIntro,
+        });
+
+        pApi.start({
+            y: 200 * tIntro,
+            scale: 1 - 0.5 * tIntro,
+            opacity: 1 - 2 * tIntro,
+        });
+
+        mouseApi.start({
+            opacity: 0.5 - 10 * tIntro,
         });
 
     });
@@ -278,11 +299,23 @@ export const Hero = () => {
                 alignItems: "center",
                 justifyContent: "center",
                 textAlign: "center",
-                transform: to([y, scale], (yv, sv) => `translate3d(0, ${yv}px, 0) scale(${sv})`),
-                opacity
             }}
         >
-            <h1>Insipiring, Thinking, Prototyping, Crafting, Developing, Supporting Digital Products for any mountains.</h1>
+            <a.h1 style={{
+                position: "relative",
+                transform: to([y, scale], (yv, sv) => `translate3d(0, ${yv}px, 0) scale(${sv})`),
+                opacity
+            }}>Inspiring Digital <br /> Products</a.h1>
+            <a.p
+                style={{
+                    position: "relative",
+                    transform: to([paragraph.y, paragraph.scale], (yv, sv) => `translate3d(0, ${yv}px, 0) scale(${sv})`),
+                    opacity: paragraph.opacity,
+                }}
+            >We think design & build</a.p>
+            <a.div className="mouse" style={{ opacity: mouse.opacity }}>
+                <div className="mouse__dot"></div>
+            </a.div>
         </a.div>
     )
 }
