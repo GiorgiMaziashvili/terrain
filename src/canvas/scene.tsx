@@ -132,7 +132,8 @@ function GridRelief() {
     const filteredIndices = useMemo(() => new Uint16Array(baseSegments.length), [baseSegments]);
 
     useFrame((_, delta) => {
-        const t = MathUtils.clamp(scroll.offset, 0, 1);
+        const firstPage = scroll.range(0 / 3, 1 / 3);     // page 0
+        const t = MathUtils.clamp(firstPage, 0, 1);
         const ease = smoothstep(0, 1, t);
 
         SPEED = MathUtils.clamp(ease, 0, MAX_SPEED);
