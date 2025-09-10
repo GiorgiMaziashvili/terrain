@@ -63,6 +63,7 @@ export function GridRelief() {
     const SPEED = MathUtils.clamp(ease, 0, MAX_SPEED);
     const rotX = -Math.PI * 0.5 * ease;
     const posZ = 1 * ease;
+    const posY = -2.5 * ease;
 
     if (lineRef.current) lineRef.current.opacity = LINE_OPACITY + 0.2 * ease;
     if (pointRef.current) pointRef.current.opacity = DOT_OPACITY + 0.7 * ease;
@@ -143,7 +144,7 @@ export function GridRelief() {
     if (groupRef.current) {
       groupRef.current.rotation.x = rotX;
       groupRef.current.position.z = posZ;
-      groupRef.current.position.y = -2.5;
+      groupRef.current.position.y = posY;
     }
   });
 
